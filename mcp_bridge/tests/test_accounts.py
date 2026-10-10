@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
 
@@ -66,14 +67,14 @@ class StorageTests(unittest.TestCase):
 
     def test_failed_replace_keeps_old_complete_pair_and_cleans_temp(self):
         first = self.saved()
-        with patch('mcp_bridge.accounts.os.replace', side_effect=OSError('synthetic failure')):
+        with patch('mcp_bridge.account_storage.os.replace', side_effect=OSError('synthetic failure')):
             with self.assertRaises(ApiError): self.secrets.persist('mail', USER, NEW_PASSWORD, first['revision'])
         self.assertEqual(self.secrets.pair('mail'), (USER, PASSWORD))
         self.assertEqual([path.name for path in self.root.iterdir()], ['mail.json'])
 
     def test_failed_file_fsync_cannot_replace_original(self):
         first = self.saved()
-        with patch('mcp_bridge.accounts.os.fsync', side_effect=OSError('synthetic failure')):
+        with patch('mcp_bridge.account_storage.os.fsync', side_effect=OSError('synthetic failure')):
             with self.assertRaises(ApiError): self.secrets.persist('mail', USER, NEW_PASSWORD, first['revision'])
         self.assertEqual(self.secrets.pair('mail'), (USER, PASSWORD))
 
@@ -83,7 +84,7 @@ class StorageTests(unittest.TestCase):
             calls.append(descriptor)
             if len(calls) == 2: raise OSError('synthetic directory failure')
             return original(descriptor)
-        with patch('mcp_bridge.accounts.os.fsync', side_effect=fsync):
+        with patch('mcp_bridge.account_storage.os.fsync', side_effect=fsync):
             with self.assertRaises(ApiError) as caught: self.secrets.persist('mail', USER, NEW_PASSWORD, first['revision'])
         self.assertEqual(caught.exception.code, 'account_save_unavailable_check_status')
         self.assertTrue(self.secrets.status()['mail']['configured'])
@@ -298,8 +299,14 @@ class HTTPTests(SecurityTests):
         self.assertEqual(response.status_code,200)
         self.assertIn("frame-ancestors 'none'",response.headers['content-security-policy'])
         self.assertEqual(response.headers['cache-control'],'no-store')
-        self.assertNotIn('value=',response.text);self.assertNotIn(' checked',response.text)
-        self.assertEqual(response.text.count('type="password"'),3)
+        inputs=[]
+        class InputParser(HTMLParser):
+            def handle_starttag(self,tag,attrs):
+                if tag=='input':inputs.append(dict(attrs))
+        InputParser().feed(response.text)
+        self.assertTrue(inputs)
+        self.assertTrue(all('value' not in attrs and 'checked' not in attrs for attrs in inputs))
+        self.assertEqual(sum(attrs.get('type')=='password' for attrs in inputs),1)
         self.assertNotIn(USER,response.text);self.assertNotIn(PASSWORD,response.text)
 
     def test_expired_recent_authentication_cannot_view_or_save(self):

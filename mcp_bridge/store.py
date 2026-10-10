@@ -159,10 +159,11 @@ class Store:
             self.db.execute("DELETE FROM calendar_consents WHERE account_revision=? AND calendar_id=?", (revision, identifier))
             self.invalidate_calendar_previews(revision, identifier)
 
-    def clear_calendar_consents(self):
+    def clear_calendar_consents(self, revision=None):
         with self.lock:
-            self.db.execute("DELETE FROM calendar_consents")
-            self.invalidate_calendar_previews()
+            if revision is None: self.db.execute("DELETE FROM calendar_consents")
+            else: self.db.execute("DELETE FROM calendar_consents WHERE account_revision=?", (revision,))
+            self.invalidate_calendar_previews(revision)
 
     def contacts_consents(self, revision):
         with self.lock:
@@ -196,10 +197,17 @@ class Store:
             self.db.execute('DELETE FROM contacts_consents WHERE account_revision=? AND addressbook_id=?', (revision, identifier))
             self.invalidate_contact_refs(revision, identifier)
 
-    def clear_contacts_consents(self):
+    def clear_contacts_consents(self, revision=None):
         with self.lock:
-            self.db.execute('DELETE FROM contacts_consents')
-            self.invalidate_contact_refs()
+            if revision is None: self.db.execute('DELETE FROM contacts_consents')
+            else: self.db.execute('DELETE FROM contacts_consents WHERE account_revision=?', (revision,))
+            self.invalidate_contact_refs(revision)
+
+    def invalidate_mail_previews(self, revision):
+        with self.lock:
+            for row in self.db.execute("SELECT key,value FROM records WHERE kind='mail_preview'").fetchall():
+                if json.loads(row['value']).get('account_revision') == revision:
+                    self.delete('mail_preview', row['key'])
 
     def approve_bootstrap(self, fingerprint):
         with self.transaction():

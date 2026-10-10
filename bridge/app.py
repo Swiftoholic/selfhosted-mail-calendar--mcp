@@ -126,7 +126,10 @@ def plain_message(message, limit):
 class Mail:
     def __init__(self, secrets, factory=TLSIMAP):
         self.secrets, self.factory = secrets, factory
-        self.provider = profiles_for(secrets).mail
+
+    @property
+    def provider(self):
+        return profiles_for(self.secrets).mail
 
     @contextmanager
     def opened(self):
@@ -353,7 +356,10 @@ def ical_events(content, maximum):
 class Calendar:
     def __init__(self, secrets, factory=None):
         self.secrets, self.factory = secrets, factory
-        self.provider = profiles_for(secrets).caldav
+
+    @property
+    def provider(self):
+        return profiles_for(self.secrets).caldav
 
     def validate_url(self, value):
         try:

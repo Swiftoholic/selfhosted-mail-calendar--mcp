@@ -33,4 +33,28 @@ Every connection resolves once, rejects mixed/private/special IP answers, connec
 
 Profiles load at startup. After editing this file, recreate only this project's mcp service, review displayed hosts and personally reenter each changed account's credentials. Old profile credentials cannot be forwarded to new hosts; effective revisions change and old IDs/previews/references become invalid. Reselect affected calendar/contact capabilities; reconnect MCP for new scopes. No other services/passwords/grants are changed automatically.
 
+## Multiple selectable profiles
+
+The version-1 schema remains supported and supplies one operator profile per protocol. Version 2 adds up to 16 named choices alongside the built-in `gmx-mail`, `icloud-caldav` and `icloud-carddav` choices. Each entry has exactly `protocol`, `name` and `config`; `config` uses the same strict protocol schema above. IDs must match `[a-z][a-z0-9_-]{0,47}`, and cannot replace built-in IDs. The defaults must name one valid profile of each protocol. All entries are operator-controlled and are loaded once at startup.
+
+```json
+{
+  "version": 2,
+  "profiles": {
+    "other-mail": {
+      "protocol": "mail",
+      "name": "Other mail provider",
+      "config": {
+        "preset": "custom",
+        "imap": {"host": "imap.example.test", "port": 993, "tls": "implicit"},
+        "smtp": {"host": "smtp.example.test", "port": 587, "tls": "starttls_required"}
+      }
+    }
+  },
+  "defaults": {"mail": "gmx-mail", "caldav": "icloud-caldav", "carddav": "icloud-carddav"}
+}
+```
+
+Accounts choose a profile ID through the owner wizard. A stored profile fingerprint prevents an operator's changed endpoint from receiving old credentials. Removing a profile marks affected accounts unavailable until owner reentry with a valid profile. Stable account IDs survive edits; revisions and bound resource IDs change. New accounts receive no MCP capabilities automatically. See [management and migration](accounts.md).
+
 Custom providers remain experimental and unverified live. Use app passwords or provider-approved basic credentials. Account checks authenticate mail protocols or read DAV discovery metadata without sending mail, reading contact bodies or writing events. They do not prove every folder, event, sharing property or vCard behavior. OAuth-only providers need a future explicit integration. Live tests remain separate owner actions.

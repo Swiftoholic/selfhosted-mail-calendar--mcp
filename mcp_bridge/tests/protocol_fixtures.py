@@ -1,5 +1,6 @@
 """Ephemeral local TLS protocol servers; synthetic data only, no public sockets."""
 import contextlib
+import base64
 import datetime as dt
 import http.server
 import socket
@@ -25,7 +26,7 @@ def certificate(directory):
     now = dt.datetime.now(dt.timezone.utc)
     cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now-dt.timedelta(minutes=1)).not_valid_after(now+dt.timedelta(days=1))
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host) for host in ('imap.example.test', 'smtp.example.test', 'calendar.example.test', 'contacts.example.test')]), critical=False)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host) for host in ('imap.example.test', 'smtp.example.test', 'calendar.example.test', 'contacts.example.test', 'imap2.example.test', 'smtp2.example.test', 'calendar2.example.test', 'contacts2.example.test')]), critical=False)
             .sign(key, hashes.SHA256()))
     cert_path, key_path = Path(directory)/'fixture-cert.pem', Path(directory)/'fixture-key.pem'
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
@@ -41,10 +42,12 @@ class ThreadServer(socketserver.ThreadingTCPServer):
     def __init__(self, handler, context, immediate=True):
         self.context,self.immediate,self.events,self.objects,self.support_starttls=context,immediate,[],{},True
         self.include_acl,self.privilege_mode=True,'allow'
+        self.expected_pair=None
         super().__init__(('127.0.0.1',0),handler)
     def get_request(self):
         client, peer=super().get_request();client.settimeout(3)
-        return (self.context.wrap_socket(client,server_side=True) if self.immediate else client),peer
+        try:return (self.context.wrap_socket(client,server_side=True) if self.immediate else client),peer
+        except Exception:client.close();raise
     def handle_error(self,*unused):
         self.events.append({'error':'synthetic_server_rejected'})
 
@@ -71,7 +74,11 @@ class IMAPHandler(socketserver.StreamRequestHandler):
             words=line.rstrip(b'\r\n').split();tag,command=words[:2];command=command.upper()
             self.server.events.append({'command':command.decode('ascii'),'tls':isinstance(self.connection,ssl.SSLSocket)})
             if command==b'CAPABILITY':self.wfile.write(b'* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n')
-            elif command==b'LOGIN':pass
+            elif command==b'LOGIN':
+                expected=self.server.expected_pair
+                matches=expected is None or tuple(word.strip(b'"').decode('ascii') for word in words[2:4])==expected
+                self.server.events.append({'authentication_matches':matches,'tls':isinstance(self.connection,ssl.SSLSocket)})
+                if not matches:self.wfile.write(tag+b' NO wrong synthetic account\r\n');continue
             elif command==b'LIST':self.wfile.write(b'* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\Trash) "/" "Trash"\r\n')
             elif command==b'EXAMINE':self.wfile.write(b'* 1 EXISTS\r\n* OK [UIDVALIDITY 111] fixture\r\n* OK [UIDNEXT 8] fixture\r\n')
             elif command==b'UID' and words[2].upper()==b'SEARCH':self.wfile.write(b'* SEARCH 7\r\n')
@@ -84,6 +91,10 @@ class IMAPHandler(socketserver.StreamRequestHandler):
 
 
 class SMTPHandler(socketserver.StreamRequestHandler):
+    def finish(self):
+        try:super().finish()
+        finally:self.connection.close()
+
     def handle(self):
         self.wfile.write(b'220 synthetic SMTP fixture\r\n')
         while line:=self.rfile.readline(32768):
@@ -98,8 +109,20 @@ class SMTPHandler(socketserver.StreamRequestHandler):
                 self.rfile.close();self.wfile.close()
                 self.connection=self.server.context.wrap_socket(self.connection,server_side=True)
                 self.rfile=self.connection.makefile('rb');self.wfile=self.connection.makefile('wb',buffering=0)
-            elif command==b'AUTH':self.wfile.write(b'235 authenticated\r\n' if encrypted else b'535 plaintext denied\r\n')
-            elif command in (b'MAIL',b'RCPT',b'RSET'):self.wfile.write(b'250 accepted\r\n')
+            elif command==b'AUTH':
+                expected=self.server.expected_pair
+                decoded=base64.b64decode(line.strip().split()[-1]).decode('ascii').split('\x00')
+                matches=expected is None or tuple(decoded[-2:])==expected
+                self.server.events.append({'authentication_matches':matches,'tls':encrypted})
+                self.wfile.write(b'235 authenticated\r\n' if encrypted and matches else b'535 denied\r\n')
+            elif command in (b'MAIL',b'RCPT',b'RSET'):
+                if command==b'MAIL' and hasattr(self.server,'expected_sender'):
+                    # SMTP keywords are case-insensitive; mailbox bytes remain exact.
+                    prefix,separator,arguments=line.partition(b':')
+                    mailbox=arguments.strip().split(maxsplit=1)[0] if separator and arguments.strip() else b''
+                    expected=b'<'+self.server.expected_sender.encode('ascii')+b'>'
+                    self.server.events.append({'sender_matches':prefix.upper()==b'MAIL FROM' and mailbox==expected})
+                self.wfile.write(b'250 accepted\r\n')
             elif command==b'DATA':
                 self.wfile.write(b'354 content\r\n')
                 while content:=self.rfile.readline(32768):
@@ -119,6 +142,11 @@ class DAVHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(raw)
     def perform(self):
         content=self.rfile.read(int(self.headers.get('Content-Length','0')))
+        if self.server.expected_pair is not None:
+            expected='Basic '+base64.b64encode(':'.join(self.server.expected_pair).encode('ascii')).decode('ascii')
+            matches=self.headers.get('Authorization')==expected
+            self.server.events.append({'authentication_matches':matches,'tls':isinstance(self.connection,ssl.SSLSocket)})
+            if not matches:return self.reply(401)
         origin='https://'+self.headers['Host'];url=origin+self.path
         self.server.events.append({'method':self.command,'path':self.path,'tls':isinstance(self.connection,ssl.SSLSocket),'auth_present':bool(self.headers.get('Authorization'))})
         if self.command=='PUT':

@@ -3,7 +3,7 @@ import hashlib
 
 from bridge.app import ApiError, bounded_int, fields
 from bridge.carddav import Contacts
-from .accounts import bind_id, current_revision
+from .accounts import bind_id, current_revision, current_account_id
 from .config import ORIGIN
 from .mail_ops import opaque
 
@@ -55,7 +55,7 @@ class ContactsOperations(Contacts):
             for item in result['items']:
                 url = item.pop('_resource_url')
                 key = hashlib.sha256((revision + ':' + consent['generation'] + ':' + url).encode('utf-8')).hexdigest()[:24]
-                self.store.put('contact_ref', key, {'account_revision': revision, 'addressbook_id': identifier,
+                self.store.put('contact_ref', key, {'account_revision': revision, 'account_id':current_account_id(self.secrets, 'carddav'), 'addressbook_id': identifier,
                                'generation': consent['generation'], 'url': url}, 600, maximum=100)
                 item['id'], item['addressbook_id'] = key, identifier
         return {**result, 'read_only': True, 'reference_expires_in': 600}
@@ -65,7 +65,7 @@ class ContactsOperations(Contacts):
         key = opaque(data.get('contact_id'))
         revision = current_revision(self.secrets, 'carddav')
         reference = self.store.get('contact_ref', key)
-        if not reference or reference.get('account_revision') != revision:
+        if not reference or reference.get('account_revision') != revision or reference.get('account_id') != current_account_id(self.secrets, 'carddav'):
             raise ApiError(404, 'contact_reference_expired_search_again')
         identifier = reference['addressbook_id']
         self.consent(identifier, reference['generation'])
