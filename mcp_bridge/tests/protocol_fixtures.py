@@ -43,6 +43,7 @@ class ThreadServer(socketserver.ThreadingTCPServer):
         self.context,self.immediate,self.events,self.objects,self.support_starttls=context,immediate,[],{},True
         self.include_acl,self.privilege_mode=True,'allow'
         self.expected_pair=None
+        self.move_capability,self.moves=b'MOVE',[]
         super().__init__(('127.0.0.1',0),handler)
     def get_request(self):
         client, peer=super().get_request();client.settimeout(3)
@@ -69,22 +70,33 @@ def fixture_dial(server, expected_host, expected_port):
 
 class IMAPHandler(socketserver.StreamRequestHandler):
     def handle(self):
+        selected=None
         self.wfile.write(b'* OK synthetic IMAP ready\r\n')
         while line:=self.rfile.readline(8192):
             words=line.rstrip(b'\r\n').split();tag,command=words[:2];command=command.upper()
             self.server.events.append({'command':command.decode('ascii'),'tls':isinstance(self.connection,ssl.SSLSocket)})
-            if command==b'CAPABILITY':self.wfile.write(b'* CAPABILITY IMAP4rev1 UIDPLUS MOVE\r\n')
+            if command==b'UID':self.server.events.append({'command':'UID_'+words[2].decode('ascii').upper(),'tls':isinstance(self.connection,ssl.SSLSocket)})
+            if command==b'CAPABILITY':self.wfile.write(b'* CAPABILITY IMAP4rev1 UIDPLUS '+self.server.move_capability+b'\r\n')
             elif command==b'LOGIN':
                 expected=self.server.expected_pair
                 matches=expected is None or tuple(word.strip(b'"').decode('ascii') for word in words[2:4])==expected
                 self.server.events.append({'authentication_matches':matches,'tls':isinstance(self.connection,ssl.SSLSocket)})
                 if not matches:self.wfile.write(tag+b' NO wrong synthetic account\r\n');continue
             elif command==b'LIST':self.wfile.write(b'* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\Trash) "/" "Trash"\r\n')
-            elif command==b'EXAMINE':self.wfile.write(b'* 1 EXISTS\r\n* OK [UIDVALIDITY 111] fixture\r\n* OK [UIDNEXT 8] fixture\r\n')
+            elif command in (b'EXAMINE',b'SELECT') and words[2].strip(b'"') in (b'INBOX',b'Trash'):
+                selected=words[2].strip(b'"');validity=b'111' if selected==b'INBOX' else b'333'
+                self.wfile.write(b'* 1 EXISTS\r\n* OK [UIDVALIDITY '+validity+b'] fixture\r\n* OK [UIDNEXT 8] fixture\r\n')
             elif command==b'UID' and words[2].upper()==b'SEARCH':self.wfile.write(b'* SEARCH 7\r\n')
             elif command==b'UID' and words[2].upper()==b'FETCH':
+                if words[4:]==[b'(UID',b'FLAGS)']:
+                    if not self.server.moves:self.wfile.write(b'* 1 FETCH (UID 7 FLAGS ())\r\n')
+                    self.wfile.write(tag+b' OK metadata\r\n');continue
                 raw=b'From: sender@example.invalid\r\nTo: owner@example.invalid\r\nSubject: Synthetic fixture\r\nDate: Sat, 10 Oct 2026 12:00:00 +0000\r\n\r\nSynthetic body only.'
                 self.wfile.write(b'* 1 FETCH (UID 7 FLAGS () RFC822.SIZE '+str(len(raw)).encode()+b' BODY[] {'+str(len(raw)).encode()+b'}\r\n'+raw+b')\r\n')
+            elif (command==b'UID' and words[2].upper()==b'MOVE' and len(words)==5 and words[3]==b'7'
+                  and words[4]==b'"Trash"' and selected==b'INBOX' and self.server.move_capability==b'MOVE' and not self.server.moves):
+                self.server.moves.append({'source_uid':7,'target_uid':77,'target_uidvalidity':333})
+                self.wfile.write(b'* OK [COPYUID 333 7 77] fixture\r\n* 1 EXPUNGE\r\n')
             elif command==b'LOGOUT':self.wfile.write(b'* BYE fixture\r\n'+tag+b' OK logout\r\n');break
             else:self.wfile.write(tag+b' BAD fixture rejects unsupported command\r\n');continue
             self.wfile.write(tag+b' OK complete\r\n')

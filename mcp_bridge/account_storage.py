@@ -51,6 +51,7 @@ class Snapshot:
     account_id: str | None = None
     profile_id: str | None = None
     capabilities: tuple[str, ...] | None = None
+    profile: object | None = None
 
 class SingleAccountSecrets(Secrets):
     managed_accounts = True

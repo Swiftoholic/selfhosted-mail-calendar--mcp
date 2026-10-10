@@ -34,7 +34,7 @@ http {
         ssl_certificate_key /run/tls/privkey.pem;
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_session_tickets off;
-        location ~ ^/(mcp|login|accounts(?:/(status|check|save|manage/(check|save|retest|remove)|calendars(?:/(list|inspect|save|revoke))?|contacts(?:/(list|save|revoke))?))?|static/(login|accounts)\.(js|css)|\.well-known/(oauth-authorization-server|oauth-protected-resource/mcp)|oauth/(authorize|token)|auth/(status|grants(?:/revoke)?|setup/request|register/(options|verify)|login/(options|verify)|logout|revoke|consent))$ {
+        location ~ ^/(mcp|login|accounts(?:/(status|check|save|manage/(check|save|retest|remove)|calendars(?:/(list|inspect|save|revoke))?|contacts(?:/(list|save|revoke))?))?|static/((login|accounts)\.(js|css)|i18n\.js)|\.well-known/(oauth-authorization-server|oauth-protected-resource/mcp)|oauth/(authorize|token)|auth/(status|grants(?:/revoke)?|setup/request|register/(options|verify)|login/(options|verify)|logout|revoke|consent))$ {
             limit_req zone=owner_auth burst=20 nodelay;
             proxy_pass http://mcp_backend;
             proxy_http_version 1.1;

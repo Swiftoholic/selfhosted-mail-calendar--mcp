@@ -24,7 +24,7 @@ class AccountManagement:
 
     def profiles(self, candidate):
         values = {protocol: self.accounts.catalog.get(protocol) for protocol in ('mail', 'caldav', 'carddav')}
-        values[candidate['protocol']] = self.accounts.catalog.selected(candidate['profile_id'], candidate['protocol'])
+        values[candidate['protocol']] = self.accounts.profile_for(candidate)
         return ProviderProfiles(**values)
 
     def retire(self, protocol, revision):
@@ -39,7 +39,9 @@ class AccountManagement:
         expected = (INPUT_FIELDS | ({'check_id', 'persistent_storage_confirmed'} if action == 'save' else set())
                     if action in {'check', 'save'} else {'provider', 'account_id', 'expected_revision'} |
                     ({'integration_removal_confirmed'} if action == 'remove' else set()))
-        if set(data) != expected:
+        # Existing preset clients remain compatible; only the recent owner can
+        # supply the optional endpoint field. It is never accepted by MCP tools.
+        if set(data) != expected and not (action in {'check', 'save'} and set(data) == expected | {'server_config'}):
             raise ApiError(400, 'invalid_account_request')
         protocol = provider_name(data['provider'])
         key = data['account_id']

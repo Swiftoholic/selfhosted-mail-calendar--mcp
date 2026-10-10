@@ -304,7 +304,15 @@ class HTTPTests(SecurityTests):
     def test_owner_overview_after_login_contains_accounts_and_status_but_never_passwords(self):
         self.accounts.seed('mail');self.enroll();result=self.client.get('/accounts/status')
         self.assertEqual(result.status_code,200);self.assertEqual(len(result.json()['items']),1)
-        self.assertIn('profile_choices',result.json());self.assertNotIn('app_password',result.text);self.assertNotIn('SYNTHETIC_ONLY',result.text)
+        self.assertIn('profile_choices',result.json());self.assertNotIn('SYNTHETIC_ONLY',result.text)
+        def no_credential_fields(value):
+            if isinstance(value, dict):
+                self.assertFalse({'app_password','password','access_token','refresh_token'} & set(value))
+                for nested in value.values(): no_credential_fields(nested)
+            elif isinstance(value, list):
+                for nested in value: no_credential_fields(nested)
+        # auth_mode may describe an app password; credential fields/values never appear.
+        no_credential_fields(result.json())
         self.assertEqual(self.checks.calls,[])
 
     def test_add_edit_remove_flow_and_double_save_no_duplicate_account(self):
