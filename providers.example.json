@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "mail": {"preset": "gmx"},
+  "caldav": {"preset": "icloud"},
+  "carddav": {"preset": "icloud"}
+}

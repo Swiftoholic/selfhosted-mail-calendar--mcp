@@ -1,0 +1,32 @@
+name: Synthetic checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Scan release files
+        run: node scripts/scan_release.cjs
+      - name: Frontend synthetic checks
+        run: node scripts/test_frontend.cjs
+      - name: Build hash-pinned dependencies and tests
+        run: docker build --target tests --tag mcp-synthetic-tests .
+      - name: Backend checks without network or real credentials
+        run: docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 256m --tmpfs /tmp:size=32m,mode=1777 --env MCP_PUBLIC_ORIGIN=https://mcp.example.test mcp-synthetic-tests
+      - name: Fresh runtime startup and HTTP boundaries
+        run: docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 256m --tmpfs /tmp:size=8m,mode=1777 --tmpfs /run/identity:size=8m,mode=700,uid=1000,gid=1000 --tmpfs /run/secrets:size=1m,mode=700,uid=1000,gid=1000 --env MCP_PUBLIC_ORIGIN=https://mcp.example.test --entrypoint python mcp-synthetic-tests -m scripts.test_runtime
+      - name: Validate standalone deployment
+        run: |
+          MCP_PUBLIC_ORIGIN=https://mcp.example.test docker compose config --quiet
+          python3 -m scripts.test_deployment

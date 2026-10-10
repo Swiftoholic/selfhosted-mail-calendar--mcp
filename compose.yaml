@@ -1,0 +1,81 @@
+name: selfhosted-mail-calendar-mcp
+
+x-runtime: &runtime
+  image: selfhosted-mail-calendar-mcp:local
+  build:
+    context: .
+    target: runtime
+  environment:
+    MCP_PUBLIC_ORIGIN: ${MCP_PUBLIC_ORIGIN:?Set MCP_PUBLIC_ORIGIN in .env}
+  read_only: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  pids_limit: 32
+  mem_limit: 256m
+  cpus: 0.50
+  tmpfs:
+    - /tmp:size=8m,mode=1777
+  volumes:
+    - identity:/run/identity
+    - accounts:/run/secrets
+
+services:
+  init-storage:
+    <<: *runtime
+    profiles: [setup]
+    user: "0:0"
+    cap_add: [CHOWN]
+    network_mode: none
+    entrypoint: [python, -m, scripts.init_storage]
+    restart: "no"
+  mcp:
+    <<: *runtime
+    user: "1000:1000"
+    restart: unless-stopped
+    networks: [bridge]
+    volumes:
+      - identity:/run/identity
+      - accounts:/run/secrets
+      - type: bind
+        source: ./runtime/providers.json
+        target: /run/config/providers.json
+        read_only: true
+        bind:
+          create_host_path: false
+    # No published backend port: only the trusted proxy can supply HTTPS headers.
+  proxy:
+    image: docker.io/library/nginx:1.30.5-alpine@sha256:3abad30db61dfb2a339ea21acc9f3e6bbe78e291fcff2f835f4510c8fdfcbd83
+    user: "1000:1000"
+    entrypoint: [nginx, -c, /etc/nginx/nginx.conf, -g, "daemon off;"]
+    depends_on: [mcp]
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 16
+    mem_limit: 64m
+    cpus: 0.25
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    ports:
+      - "${MCP_BIND_ADDRESS:-127.0.0.1}:${MCP_HTTPS_PORT:-8443}:8443"
+    volumes:
+      - type: bind
+        source: ./runtime/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./runtime/tls
+        target: /run/tls
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [bridge]
+
+networks:
+  bridge: {}
+volumes:
+  identity: {}
+  accounts: {}

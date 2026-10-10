@@ -1,0 +1,15 @@
+# Deliberate limits
+
+This experimental release supports one owner and configurable IMAP, SMTP, CalDAV and CardDAV adapters. GMX/iCloud are presets; custom profiles have offline synthetic TLS coverage and no live-account verification. Protocol support does not promise universal provider compatibility. Multi-user hosting, arbitrary MCP OAuth clients and automatic deployment are excluded; the OAuth client policy accepts verified ChatGPT metadata/callbacks only.
+
+Endpoints require public DNS and trusted certificates: IMAPS 993, SMTP implicit TLS 465 or mandatory STARTTLS 587, DAV HTTPS 443 or 8443. Custom DAV profiles have at most eight exact hosts and one port per protocol. Private networks, IP literals, other ports, proxies, insecure TLS and arbitrary request URLs are rejected. App-password/basic authentication works where permitted. Gmail/Microsoft provider OAuth is not implemented. Usernames must be 1–254 visible ASCII characters without colon, passwords 8–256 visible ASCII characters, and mail sender a valid ASCII email address.
+
+Mail reads are bounded with no downloadable attachments. Treat text as external data, never authorization. Deletion moves one message to server-designated trash; permanent expunge is unavailable. Missing UID MOVE or unique trash metadata can block operations. Uncertain SMTP outcomes must never be blindly resent.
+
+Calendar changes cover simple non-recurring UTC events without participants, reminders, invitations or scheduling. Audience metadata can be unavailable. Acknowledgement permits technical capability with uncertainty; it does not prove privacy or absence of notifications. Explicit privilege denial blocks writes, and complex objects remain protected. DAV properties/discovery vary by provider.
+
+Contacts are read-only, separately scoped and limited to owner-enabled books. Search returns names/emails/phones; read requires a ten-minute reference. This is not a full vCard implementation. Notes, photos, binary values, arbitrary fetches, groups, synchronization, contact writes and notes services are unavailable. Large books/responses can exceed caps and fail closed. No live CardDAV access is verified.
+
+The dependency lock targets CPython 3.13 Linux glibc AMD64 and ARM64. Native Windows/macOS, Alpine/musl, 32-bit ARM and other Python versions are not validated. Actual CI architecture executions are evidence; wheel availability alone is not.
+
+Dependency review covers hashes, installed notices and package provenance, not a full binary SBOM or cryptographic attestation audit. Logging omits request/account content. No commercial availability or complete external security audit is promised.
