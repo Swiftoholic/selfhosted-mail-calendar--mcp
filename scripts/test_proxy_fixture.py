@@ -100,9 +100,16 @@ def probe(host):
         status, raw = request(context, host, path, method)
         if status != expected or b'synthetic_backend_reached' in raw:
             raise RuntimeError('synthetic_forbidden_route_accepted')
-    status, raw = request(context, 'wrong.example.test', '/accounts/status')
+    # An unmatched Host selects nginx's default server (404), whereas a wrong
+    # port on the matching server name reaches its explicit Host guard (421).
+    for path in ('/accounts/status', '/'):
+        status, raw = request(context, 'wrong.example.test', path)
+        if status not in (404, 421) or b'synthetic_backend_reached' in raw:
+            raise RuntimeError('synthetic_wrong_host_accepted')
+    wrong_port_host = 'mcp.example.test:8443' if host == 'mcp.example.test' else 'mcp.example.test'
+    status, raw = request(context, wrong_port_host, '/accounts/status')
     if status != 421 or b'synthetic_backend_reached' in raw:
-        raise RuntimeError('synthetic_wrong_host_accepted')
+        raise RuntimeError('synthetic_wrong_host_port_accepted')
     connection = http.client.HTTPConnection('127.0.0.1', 8443, timeout=3)
     connection.connect()
     try:
@@ -118,8 +125,8 @@ def probe(host):
             raise RuntimeError('synthetic_wrong_sni_accepted')
     finally:
         connection.close()
-    print(json.dumps({'proxy_http_probes': len(positive) + len(negative) + 2,
-                      'allowed_routes': len(positive), 'negative_boundaries': len(negative) + 2,
+    print(json.dumps({'proxy_http_probes': len(positive) + len(negative) + 4,
+                      'allowed_routes': len(positive), 'negative_boundaries': len(negative) + 4,
                       'host_variant': host, 'failures': 0, 'tls_verified': True,
                       'network_namespace': 'none', 'published_ports': False}), flush=True)
 

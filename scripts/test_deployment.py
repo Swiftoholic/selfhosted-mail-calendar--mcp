@@ -105,7 +105,7 @@ def main():
                          'scripts.test_proxy_fixture', 'probe', '--host', host], 'HTTP proxy ' + host, env)
                 print(json.dumps(json.loads(report)), flush=True)
                 cleanup([backend, proxy])
-        print(json.dumps({'proxy_parse_checks': 2, 'proxy_http_probes': 54, 'failures': 0,
+        print(json.dumps({'proxy_parse_checks': 2, 'proxy_http_probes': 58, 'failures': 0,
                           'ephemeral_tls_only': True, 'production_mounts': False,
                           'published_ports': False}), flush=True)
     finally:
