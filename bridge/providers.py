@@ -117,6 +117,60 @@ def profiles_for(source):
     return getattr(source, 'profiles', DEFAULT_PROFILES)
 
 
+PROFILE_ID = re.compile(r'[a-z][a-z0-9_-]{0,47}\Z')
+
+
+class ProviderCatalog:
+    """Only operator-validated profiles are selectable; no browser endpoints."""
+    def __init__(self, profiles=DEFAULT_PROFILES, extra=None, defaults=None):
+        self.entries = {
+            'gmx-mail': ('mail', 'GMX', GMX),
+            'icloud-caldav': ('caldav', 'iCloud', ICLOUD_CALDAV),
+            'icloud-carddav': ('carddav', 'iCloud', ICLOUD_CARDDAV),
+        }
+        self.defaults = {'mail': 'gmx-mail', 'caldav': 'icloud-caldav', 'carddav': 'icloud-carddav'}
+        for protocol in self.defaults:
+            selected = profiles.get(protocol)
+            if selected.identifier == 'custom':
+                key = 'operator-' + protocol
+                self.entries[key] = (protocol, 'Eigener Anbieter', selected)
+                self.defaults[protocol] = key
+        self.entries.update(extra or {})
+        if defaults is not None:
+            self.defaults = defaults
+        if set(self.defaults) != {'mail', 'caldav', 'carddav'} or any(
+                key not in self.entries or self.entries[key][0] != protocol for protocol, key in self.defaults.items()):
+            raise ValueError('invalid_provider_configuration')
+
+    @classmethod
+    def from_profiles(cls, profiles):
+        return profiles if isinstance(profiles, cls) else cls(profiles)
+
+    def selected(self, identifier, protocol):
+        if not isinstance(identifier, str) or identifier not in self.entries or self.entries[identifier][0] != protocol:
+            raise ValueError('unsupported_provider_profile')
+        return self.entries[identifier][2]
+
+    def get(self, protocol):
+        return self.selected(self.defaults[protocol], protocol)
+
+    @property
+    def mail(self): return self.get('mail')
+
+    @property
+    def caldav(self): return self.get('caldav')
+
+    @property
+    def carddav(self): return self.get('carddav')
+
+    def public(self):
+        return {protocol: self.get(protocol).public() for protocol in self.defaults}
+
+    def choices(self):
+        return [{'id': key, 'protocol': protocol, 'name': name, **profile.public()}
+                for key, (protocol, name, profile) in self.entries.items()]
+
+
 def unique_object(pairs):
     result = {}
     for key, value in pairs:
@@ -129,6 +183,22 @@ def unique_object(pairs):
 def parse_profiles(value):
     """Strict schema, narrow port choices, explicit per-protocol server allowlists."""
     try:
+        if isinstance(value, dict) and type(value.get('version')) is int and value['version'] == 2:
+            if set(value) != {'version', 'profiles', 'defaults'} or not isinstance(value['profiles'], dict) or not 1 <= len(value['profiles']) <= 16:
+                raise ValueError()
+            entries = {}
+            reserved = {'gmx-mail', 'icloud-caldav', 'icloud-carddav'}
+            for key, item in value['profiles'].items():
+                if (not isinstance(key, str) or not PROFILE_ID.fullmatch(key) or key in reserved or
+                        not isinstance(item, dict) or set(item) != {'protocol', 'name', 'config'} or
+                        item['protocol'] not in ('mail', 'caldav', 'carddav') or not isinstance(item['name'], str) or
+                        not 1 <= len(item['name']) <= 80 or any(ord(c) < 32 or ord(c) == 127 for c in item['name'])):
+                    raise ValueError()
+                protocol = item['protocol']
+                old = {'version': 1, 'mail': {'preset': 'gmx'}, 'caldav': {'preset': 'icloud'}, 'carddav': {'preset': 'icloud'}}
+                old[protocol] = item['config']
+                entries[key] = (protocol, item['name'], parse_profiles(old).get(protocol))
+            return ProviderCatalog(extra=entries, defaults=value['defaults'])
         if not isinstance(value, dict) or set(value) != {'version', 'mail', 'caldav', 'carddav'} or type(value['version']) is not int or value['version'] != 1:
             raise ValueError()
         mail = value['mail']

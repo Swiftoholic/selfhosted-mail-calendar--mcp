@@ -48,7 +48,10 @@ class Contacts:
     """Protocol interface; the MCP facade enforces independent book consent."""
     def __init__(self,secrets,factory=None):
         self.secrets,self.factory=secrets,factory
-        self.provider=profiles_for(secrets).carddav
+
+    @property
+    def provider(self):
+        return profiles_for(self.secrets).carddav
 
     def validate_url(self,value):
         try:return self.provider.validate_url(value)

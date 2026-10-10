@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 from bridge.app import ApiError, CAL, DAV, Calendar, calendar_id, fields, icloud_url, propfind, successful_props, tls_context
 from bridge.network import TLSHTTPS
 from .mail_ops import opaque
-from .accounts import current_revision
+from .accounts import current_revision, current_account_id
 from .calendar_consent import metadata as calendar_metadata
 
 CS='http://calendarserver.org/ns/'
@@ -225,9 +225,11 @@ class CalendarOperations(Calendar):
                             'owner_calendar_write_consent':True,'capability_is_not_event_approval':True,
                             'external_invitations':False,'calendar_delete_has_no_bridge_undo':action=='delete'}}
         preview_id=secrets.token_hex(12)
+        account_id = current_account_id(self.secrets, 'caldav')
+        if account_id is not None: payload['preview']['account_id'] = account_id
         import hashlib,json
         preview_hash=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-        self.store.put('calendar_preview',preview_id,{'payload':payload,'hash':preview_hash,'account_revision':current_revision(self.secrets,'caldav')},600)
+        self.store.put('calendar_preview',preview_id,{'payload':payload,'hash':preview_hash,'account_revision':current_revision(self.secrets,'caldav'),'account_id':account_id},600)
         return {'preview_id':preview_id,'preview_hash':preview_hash,'preview':payload['preview'],'expires_in':600,'changed':False,
                 'requires_specific_user_action_confirmation':True,'data_trust':'untrusted'}
 
@@ -236,11 +238,12 @@ class CalendarOperations(Calendar):
         if data.get('confirmed') is not True:raise ApiError(400,'specific_user_action_confirmation_required')
         self.secrets.pair('caldav');preview_id=opaque(data.get('preview_id'))
         revision=current_revision(self.secrets,'caldav')
-        identity,cached=self.store.reserve_operation('calendar_commit',data.get('idempotency_key'),{**data,'account_revision':revision})
+        account_id = current_account_id(self.secrets, 'caldav')
+        identity,cached=self.store.reserve_operation('calendar_commit',data.get('idempotency_key'),{**data,'account_revision':revision,'account_id':account_id})
         if cached is not None:return {**cached,'replayed_receipt':True}
         try:
             record=self.store.get('calendar_preview',preview_id)
-            if not record or record.get('account_revision')!=revision or record['hash']!=data.get('preview_hash'):raise ApiError(409,'expired_or_changed_preview')
+            if not record or record.get('account_revision')!=revision or record.get('account_id')!=account_id or record['hash']!=data.get('preview_hash'):raise ApiError(409,'expired_or_changed_preview')
             payload=record['payload']
             generation = payload.get('consent_generation')
             if not generation: raise ApiError(409,'calendar_consent_changed_or_revoked')

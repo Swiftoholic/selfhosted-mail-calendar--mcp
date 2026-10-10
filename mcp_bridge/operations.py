@@ -21,8 +21,13 @@ class Operations:
         if getattr(self.secrets,'managed_accounts',False):
             provider='mail' if path.startswith(('/v1/mail/','/mcp/mail/')) else 'caldav' if path.startswith(('/v1/calendars/','/mcp/calendar/')) else 'carddav' if path.startswith('/mcp/contacts/') else None
             if provider is None:raise ApiError(404,'operation_not_allowed')
-            with self.secrets.operation(provider) as snapshot:
+            account_id = data.get('account_id')
+            with self.secrets.operation(provider, account_id) as snapshot:
                 mapped=dict(data)
+                mapped.pop('account_id', None)
+                scope = ('mail:send' if path.endswith(('/prepare-send', '/send')) else 'mail:write' if path.endswith(('/flags', '/move', '/trash')) else 'mail:read') if provider == 'mail' else ('calendars:write' if path.startswith('/mcp/calendar/') else 'calendars:read') if provider == 'caldav' else 'contacts:read'
+                if snapshot.capabilities is not None and scope not in snapshot.capabilities:
+                    raise ApiError(403, 'account_capability_required')
                 for key,purpose in (('mailbox_id','mailbox'),('target_mailbox_id','mailbox'),('calendar_id','calendar'),('object_id','object'),('addressbook_id','addressbook'),('contact_id','contact')):
                     if mapped.get(key) is not None:mapped[key]=bind_id(mapped[key],snapshot.revision,purpose)
                 result=self.dispatch(path,mapped)
@@ -36,7 +41,10 @@ class Operations:
                     for key,item in value.items():
                         result[key]=bind_id(item,snapshot.revision,purposes[key]) if key in purposes and item is not None else convert(item)
                     return result
-                return convert(result)
+                converted = convert(result)
+                if snapshot.account_id is not None:
+                    converted['account_id'] = snapshot.account_id
+                return converted
         return self.dispatch(path,data)
 
     def dispatch(self,path,data):

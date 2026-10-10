@@ -17,7 +17,7 @@ from email.message import EmailMessage
 from bridge.app import ApiError, Mail, bounded_int, fields, text, tls_context
 from bridge.network import TLSIMAP, smtp_connection
 from .config import DOMAIN
-from .accounts import current_revision
+from .accounts import current_revision, current_account_id
 
 
 def opaque(value):
@@ -208,10 +208,12 @@ class MailOperations(Mail):
         if not isinstance(body,str) or not 1<=len(body.encode())<=10000 or '\x00' in body:raise ApiError(400,'invalid_body')
         preview={'from':sender,**recipients,'subject':subject,'body':body,'message_id':'<'+secrets.token_hex(16)+'@'+DOMAIN+'>',
                  'prepared_at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        account_id = current_account_id(self.secrets, 'mail')
+        if account_id is not None: preview['account_id'] = account_id
         if len(json.dumps(preview).encode())>14000:raise ApiError(400,'preview_too_large')
         preview_id=secrets.token_hex(12)
         preview_hash=hashlib.sha256(json.dumps(preview,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-        self.store.put('mail_preview',preview_id,{'preview':preview,'hash':preview_hash,'account_revision':current_revision(self.secrets,'mail')},600)
+        self.store.put('mail_preview',preview_id,{'preview':preview,'hash':preview_hash,'account_revision':current_revision(self.secrets,'mail'),'account_id':account_id},600)
         return {'preview_id':preview_id,'preview_hash':preview_hash,'preview':preview,'expires_in':600,'sent':False,'server_draft_created':False,
                 'requires_separate_specific_user_send_instruction':True,'data_trust':'untrusted'}
 
@@ -222,11 +224,12 @@ class MailOperations(Mail):
         sender=address(self.secrets.sender() if callable(getattr(self.secrets,'sender',None)) else username)
         preview_id=opaque(data.get('preview_id'))
         revision=current_revision(self.secrets,'mail')
-        identity,cached=self.store.reserve_operation('mail_send',data.get('idempotency_key'),{**data,'account_revision':revision})
+        account_id = current_account_id(self.secrets, 'mail')
+        identity,cached=self.store.reserve_operation('mail_send',data.get('idempotency_key'),{**data,'account_revision':revision,'account_id':account_id})
         if cached is not None:return {**cached,'replayed_receipt':True}
         try:
             record=self.store.get('mail_preview',preview_id)
-            if not record or record.get('account_revision')!=revision or record['hash']!=data.get('preview_hash') or record['preview']['from']!=sender:
+            if not record or record.get('account_revision')!=revision or record.get('account_id')!=account_id or record['hash']!=data.get('preview_hash') or record['preview']['from']!=sender:
                 raise ApiError(409,'expired_or_changed_preview')
             # Separate single-use claim also blocks replay with a NEW key.
             with self.store.transaction():
