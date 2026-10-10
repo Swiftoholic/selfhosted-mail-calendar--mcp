@@ -77,7 +77,7 @@ class IMAPHandler(socketserver.StreamRequestHandler):
             elif command==b'LOGIN':
                 expected=self.server.expected_pair
                 matches=expected is None or tuple(word.strip(b'"').decode('ascii') for word in words[2:4])==expected
-                self.server.events.append({'authentication_matches':matches})
+                self.server.events.append({'authentication_matches':matches,'tls':isinstance(self.connection,ssl.SSLSocket)})
                 if not matches:self.wfile.write(tag+b' NO wrong synthetic account\r\n');continue
             elif command==b'LIST':self.wfile.write(b'* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\Trash) "/" "Trash"\r\n')
             elif command==b'EXAMINE':self.wfile.write(b'* 1 EXISTS\r\n* OK [UIDVALIDITY 111] fixture\r\n* OK [UIDNEXT 8] fixture\r\n')
@@ -117,7 +117,11 @@ class SMTPHandler(socketserver.StreamRequestHandler):
                 self.wfile.write(b'235 authenticated\r\n' if encrypted and matches else b'535 denied\r\n')
             elif command in (b'MAIL',b'RCPT',b'RSET'):
                 if command==b'MAIL' and hasattr(self.server,'expected_sender'):
-                    self.server.events.append({'sender_matches':b'FROM:<'+self.server.expected_sender.encode('ascii')+b'>' in line})
+                    # SMTP keywords are case-insensitive; mailbox bytes remain exact.
+                    prefix,separator,arguments=line.partition(b':')
+                    mailbox=arguments.strip().split(maxsplit=1)[0] if separator and arguments.strip() else b''
+                    expected=b'<'+self.server.expected_sender.encode('ascii')+b'>'
+                    self.server.events.append({'sender_matches':prefix.upper()==b'MAIL FROM' and mailbox==expected})
                 self.wfile.write(b'250 accepted\r\n')
             elif command==b'DATA':
                 self.wfile.write(b'354 content\r\n')

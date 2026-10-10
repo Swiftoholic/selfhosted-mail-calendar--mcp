@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from html.parser import HTMLParser
 from pathlib import Path
 from unittest.mock import patch
 
@@ -298,8 +299,14 @@ class HTTPTests(SecurityTests):
         self.assertEqual(response.status_code,200)
         self.assertIn("frame-ancestors 'none'",response.headers['content-security-policy'])
         self.assertEqual(response.headers['cache-control'],'no-store')
-        self.assertNotIn('value=',response.text);self.assertNotIn(' checked',response.text)
-        self.assertEqual(response.text.count('type="password"'),3)
+        inputs=[]
+        class InputParser(HTMLParser):
+            def handle_starttag(self,tag,attrs):
+                if tag=='input':inputs.append(dict(attrs))
+        InputParser().feed(response.text)
+        self.assertTrue(inputs)
+        self.assertTrue(all('value' not in attrs and 'checked' not in attrs for attrs in inputs))
+        self.assertEqual(sum(attrs.get('type')=='password' for attrs in inputs),1)
         self.assertNotIn(USER,response.text);self.assertNotIn(PASSWORD,response.text)
 
     def test_expired_recent_authentication_cannot_view_or_save(self):
