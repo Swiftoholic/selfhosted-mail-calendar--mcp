@@ -33,7 +33,7 @@ class MissingSecrets:
 
 class IMAPFixture:
     def __init__(self):
-        self.capabilities=(b'IMAP4rev1',b'MOVE',b'UIDPLUS')
+        self.capabilities=('IMAP4REV1','MOVE','UIDPLUS')
         self.messages={'INBOX':{7:set()},'Archive':{},'Trash':{}}
         self.validity={'INBOX':111,'Archive':222,'Trash':333}
         self.selected='INBOX';self.commands=[];self.mapping=None
@@ -212,9 +212,21 @@ class AdapterTests(unittest.TestCase):
             with self.assertRaises(ApiError):self.mail.mutate('move',self.mutation(**changes,idempotency_key='fixture-key-'+str(len(self.imap.commands)).zfill(8)))
         self.assertFalse(any(v[0]=='MOVE' for v in self.imap.commands))
     def test_move_extension_required_no_unsafe_fallback(self):
-        self.imap.capabilities=(b'IMAP4rev1',)
+        self.imap.capabilities=('IMAP4REV1',)
         with self.assertRaises(ApiError):self.mail.mutate('trash',self.mutation())
         self.assertFalse(any(v[0] in {'MOVE','COPY','STORE','EXPUNGE'} for v in self.imap.commands))
+    def test_move_lookalike_denied_failed_receipt_requires_fresh_key(self):
+        self.imap.capabilities=('IMAP4REV1','NOTMOVE','UIDPLUS')
+        before=copy.deepcopy(self.imap.messages)
+        with self.assertRaises(ApiError) as error:self.mail.mutate('trash',self.mutation())
+        self.assertEqual(error.exception.code,'server_uid_move_required');self.assertEqual(self.imap.messages,before)
+        self.imap.capabilities=('IMAP4REV1','MOVE','UIDPLUS')
+        count=len(self.imap.commands)
+        with self.assertRaisesRegex(ValueError,'operation_outcome_uncertain_do_not_retry'):self.mail.mutate('trash',self.mutation())
+        self.assertEqual(len(self.imap.commands),count)
+        self.assertTrue(self.mail.mutate('trash',self.mutation(idempotency_key='fixture-fresh-move-0001'))['recoverable_trash'])
+        self.assertEqual(sum(v[0]=='MOVE' for v in self.imap.commands),1)
+        self.assertFalse(any(v[0] in {'COPY','EXPUNGE','CLOSE'} for v in self.imap.commands))
     def test_no_arbitrary_flags_or_permanent_delete(self):
         for path in ('/mcp/mail/purge','/mcp/mail/empty-trash','/mcp/mail/command'):
             with self.assertRaises(ApiError):self.backend.call('POST',path,{})

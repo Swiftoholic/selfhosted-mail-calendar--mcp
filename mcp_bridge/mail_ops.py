@@ -178,7 +178,7 @@ class MailOperations(Mail):
                         target=trash[0]
                     else:target=self.find(folders,data['target_mailbox_id'])
                     if source['id']==target['id']:raise ApiError(400,'same_folder')
-                    if b'MOVE' not in client.capabilities:raise ApiError(409,'server_uid_move_required')
+                    if 'MOVE' not in client.capabilities:raise ApiError(409,'server_uid_move_required')
                     if client.uid('MOVE',str(uid),client._quote(target['name']))[0]!='OK':raise ApiError(502,'move_outcome_uncertain')
                     _,mapping=client.response('COPYUID');raw=mapping[0] if mapping else b''
                     match=re.fullmatch(rb'(\d+) (\d+) (\d+)',raw or b'')

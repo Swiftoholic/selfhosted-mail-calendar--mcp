@@ -1,4 +1,4 @@
-"""Operator-owned protocol profiles; MCP and browser inputs never select hosts."""
+"""Pinned presets/operator profiles and validated, owner-only account endpoints."""
 from dataclasses import dataclass
 import hashlib
 import json
@@ -118,16 +118,49 @@ def profiles_for(source):
 
 
 PROFILE_ID = re.compile(r'[a-z][a-z0-9_-]{0,47}\Z')
+# ':' was never permitted in V2 operator IDs, so manual accounts cannot collide
+# with a formerly valid operator profile or silently reinterpret its records.
+MANUAL_IDS = {protocol: 'manual:' + protocol for protocol in ('mail', 'caldav', 'carddav')}
+
+
+def manual_profile(protocol, config):
+    """Reuse the strict operator protocol schema; no network or mutable registry.
+
+    A manual DAV URL authorizes exactly its own DNS host. Each eventual transport
+    still rejects nonpublic/mixed DNS, pins the checked IP and verifies TLS/SNI.
+    The returned fresh canonical configuration is bound into the account proof.
+    """
+    if protocol not in MANUAL_IDS or not isinstance(config, dict):
+        raise ValueError('invalid_manual_server_config')
+    try:
+        defaults = {'version': 1, 'mail': {'preset': 'gmx'}, 'caldav': {'preset': 'icloud'}, 'carddav': {'preset': 'icloud'}}
+        defaults[protocol] = config
+        profile = parse_profiles(defaults).get(protocol)
+        if profile.identifier != 'custom':
+            raise ValueError()
+        if protocol == 'mail':
+            hosts = [profile.imap_host, profile.smtp_host]
+            canonical = {'preset': 'custom', 'imap': {'host': profile.imap_host, 'port': profile.imap_port, 'tls': 'implicit'},
+                         'smtp': {'host': profile.smtp_host, 'port': profile.smtp_port,
+                                  'tls': 'implicit' if profile.smtp_port == 465 else 'starttls_required'}}
+        else:
+            host = profile.validate_url(profile.origin).hostname
+            if config['allowed_hosts'] != [host]:
+                raise ValueError()
+            hosts = [host]
+            canonical = {'preset': 'custom', 'origin': profile.origin, 'allowed_hosts': [host]}
+        if any(host.endswith('.home.arpa') for host in hosts):
+            raise ValueError()
+        return profile, canonical
+    except (KeyError, ValueError, TypeError, AttributeError):
+        raise ValueError('invalid_manual_server_config') from None
 
 
 class ProviderCatalog:
-    """Only operator-validated profiles are selectable; no browser endpoints."""
+    """Named profiles are immutable; manual endpoints belong to an account only."""
     def __init__(self, profiles=DEFAULT_PROFILES, extra=None, defaults=None):
-        self.entries = {
-            'gmx-mail': ('mail', 'GMX', GMX),
-            'icloud-caldav': ('caldav', 'iCloud', ICLOUD_CALDAV),
-            'icloud-carddav': ('carddav', 'iCloud', ICLOUD_CARDDAV),
-        }
+        from .provider_presets import bundle
+        self.entries, self.choice_info, self.unavailable_choices = bundle()
         self.defaults = {'mail': 'gmx-mail', 'caldav': 'icloud-caldav', 'carddav': 'icloud-carddav'}
         for protocol in self.defaults:
             selected = profiles.get(protocol)
@@ -135,7 +168,11 @@ class ProviderCatalog:
                 key = 'operator-' + protocol
                 self.entries[key] = (protocol, 'Eigener Anbieter', selected)
                 self.defaults[protocol] = key
-        self.entries.update(extra or {})
+        # Existing V2 IDs take precedence over newly introduced template names.
+        # Their immutable transport/fingerprint and operator guidance survive.
+        for key, entry in (extra or {}).items():
+            self.entries[key] = entry
+            self.choice_info[key] = {'info_key': 'provider.operator', 'auth_mode': 'provider_password', 'source_urls': []}
         if defaults is not None:
             self.defaults = defaults
         if set(self.defaults) != {'mail', 'caldav', 'carddav'} or any(
@@ -167,8 +204,17 @@ class ProviderCatalog:
         return {protocol: self.get(protocol).public() for protocol in self.defaults}
 
     def choices(self):
-        return [{'id': key, 'protocol': protocol, 'name': name, **profile.public()}
-                for key, (protocol, name, profile) in self.entries.items()]
+        return [{'id': key, 'protocol': protocol, 'name': name, 'supported': True, **profile.public(),
+                 **self.choice_info.get(key, {'info_key': 'provider.operator', 'auth_mode': 'provider_password', 'source_urls': []})}
+                for key, (protocol, name, profile) in self.entries.items()] + [
+                    {'id': key, 'protocol': protocol, 'name': 'Other provider / Manual', 'manual': True,
+                     'supported': True, 'auth_mode': 'provider_password', 'info_key': 'provider.manual', 'source_urls': []}
+                    for protocol, key in MANUAL_IDS.items()] + [dict(choice) for choice in self.unavailable_choices
+                                                               if choice['id'] not in self.entries]
+
+    def oauth_only(self, identifier):
+        return (isinstance(identifier, str) and identifier not in self.entries and
+                any(choice['id'] == identifier and choice['auth_mode'] == 'oauth_required' for choice in self.unavailable_choices))
 
 
 def unique_object(pairs):
@@ -187,6 +233,8 @@ def parse_profiles(value):
             if set(value) != {'version', 'profiles', 'defaults'} or not isinstance(value['profiles'], dict) or not 1 <= len(value['profiles']) <= 16:
                 raise ValueError()
             entries = {}
+            # Preserve the original V2 schema: newer template names were legal
+            # operator IDs before this feature and must keep their meaning.
             reserved = {'gmx-mail', 'icloud-caldav', 'icloud-carddav'}
             for key, item in value['profiles'].items():
                 if (not isinstance(key, str) or not PROFILE_ID.fullmatch(key) or key in reserved or

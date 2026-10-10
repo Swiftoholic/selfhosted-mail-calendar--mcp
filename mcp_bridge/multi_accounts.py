@@ -15,7 +15,7 @@ import threading
 import time
 
 from bridge.app import ApiError
-from bridge.providers import ProviderCatalog, ProviderProfiles, unique_object
+from bridge.providers import MANUAL_IDS, ProviderCatalog, ProviderProfiles, manual_profile, unique_object
 from .account_storage import SingleAccountSecrets, Snapshot, credentials, provider_name, sender_address
 
 CATALOG = 'accounts.json'
@@ -60,7 +60,9 @@ class MultiAccountSecrets(SingleAccountSecrets):
         values = {protocol: self.catalog.get(protocol) for protocol in CAPABILITIES}
         for protocol in values:
             snapshot = getattr(local, protocol, None)
-            if snapshot and snapshot.profile_id:
+            if snapshot and snapshot.profile is not None:
+                values[protocol] = snapshot.profile
+            elif snapshot and snapshot.profile_id:
                 values[protocol] = self.catalog.selected(snapshot.profile_id, protocol)
         return ProviderProfiles(**values)
 
@@ -102,14 +104,23 @@ class MultiAccountSecrets(SingleAccountSecrets):
             identifier(value['generation'])
             ids, revisions = set(), set()
             for item in value['accounts']:
-                if not isinstance(item, dict) or set(item) != RECORD_FIELDS:
+                if not isinstance(item, dict) or set(item) not in (RECORD_FIELDS, RECORD_FIELDS | {'server_config'}):
                     raise ValueError()
                 key, revision = identifier(item['id']), identifier(item['revision'])
                 if key in ids or revision in revisions:
                     raise ValueError()
                 ids.add(key); revisions.add(revision)
                 protocol = provider_name(item['protocol'])
-                if not isinstance(item['profile_id'], str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,47}', item['profile_id']):
+                if (not isinstance(item['profile_id'], str) or
+                        (item['profile_id'] not in MANUAL_IDS.values() and not re.fullmatch(r'[a-z][a-z0-9_-]{0,47}', item['profile_id']))):
+                    raise ValueError()
+                if item['profile_id'] in MANUAL_IDS.values():
+                    if item['profile_id'] != MANUAL_IDS[protocol] or 'server_config' not in item:
+                        raise ValueError()
+                    _, canonical = manual_profile(protocol, item['server_config'])
+                    if canonical != item['server_config']:
+                        raise ValueError()
+                elif 'server_config' in item:
                     raise ValueError()
                 # Removed operator profiles must produce an honest unavailable status.
                 if not isinstance(item['profile_fingerprint'], str) or not re.fullmatch(r'[a-f0-9]{64}', item['profile_fingerprint']):
@@ -216,11 +227,16 @@ class MultiAccountSecrets(SingleAccountSecrets):
         except ApiError as error:
             if account_id is None and error.code == 'provider_not_configured': return None
             raise
-        try: profile = self.catalog.selected(item['profile_id'], provider)
+        try: profile = self.profile_for(item)
         except ValueError: profile = None
         return Snapshot(item['revision'], item['username'], item['app_password'], item['sender_email'],
                         profile is not None and profile.fingerprint == item['profile_fingerprint'],
-                        item['id'], item['profile_id'], tuple(item['capabilities']))
+                        item['id'], item['profile_id'], tuple(item['capabilities']), profile)
+
+    def profile_for(self, item):
+        if item['profile_id'] == MANUAL_IDS[item['protocol']]:
+            return manual_profile(item['protocol'], item['server_config'])[0]
+        return self.catalog.selected(item['profile_id'], item['protocol'])
 
     @contextlib.contextmanager
     def guarded(self, provider, account_id=None):
@@ -288,11 +304,15 @@ class MultiAccountSecrets(SingleAccountSecrets):
                 protocol, profile_id = item['protocol'], item['profile_id']
                 snapshot = self.load(protocol, item['id'])
                 row = {'id': item['id'], 'protocol': protocol, 'profile_id': profile_id, 'label': item['label'],
-                       'provider': self.catalog.entries[profile_id][1] if profile_id in self.catalog.entries else 'Profil nicht verfügbar',
+                       'provider': ('Other provider / Manual' if profile_id == MANUAL_IDS[protocol] else
+                                    self.catalog.entries[profile_id][1] if profile_id in self.catalog.entries else 'Profile unavailable'),
                        'capabilities': list(snapshot.capabilities), 'configured': snapshot.profile_matches,
                        'connection': item['connection'] if snapshot.profile_matches else {'state': 'profile_changed', 'checked_at': None},
                        'data_trust': 'untrusted'}
-                if owner: row.update(revision=item['revision'], username=item['username'], sender_email=item['sender_email'])
+                if owner:
+                    row.update(revision=item['revision'], username=item['username'], sender_email=item['sender_email'])
+                    if 'server_config' in item:
+                        row['server_config'] = json.loads(json.dumps(item['server_config']))
                 result.append(row)
             return result
 
@@ -314,8 +334,17 @@ class MultiAccountSecrets(SingleAccountSecrets):
         old = self._choose(protocol, identifier(key)) if key is not None else None
         if data.get('expected_revision') != (old['revision'] if old else None):
             raise ApiError(409, 'account_changed_reload_form')
-        try: profile = self.catalog.selected(data.get('profile_id'), protocol)
-        except ValueError: raise ApiError(400, 'unsupported_provider_profile') from None
+        server_config = None
+        if data.get('profile_id') == MANUAL_IDS[protocol]:
+            try: profile, server_config = manual_profile(protocol, data.get('server_config'))
+            except ValueError: raise ApiError(400, 'invalid_manual_server_config') from None
+        else:
+            if data.get('server_config') is not None:
+                raise ApiError(400, 'invalid_account_request')
+            if self.catalog.oauth_only(data.get('profile_id')):
+                raise ApiError(400, 'provider_oauth_not_supported')
+            try: profile = self.catalog.selected(data.get('profile_id'), protocol)
+            except ValueError: raise ApiError(400, 'unsupported_provider_profile') from None
         password = data.get('app_password')
         if password is None and old:
             if old['profile_id'] != data['profile_id'] or old['profile_fingerprint'] != profile.fingerprint:
@@ -325,10 +354,13 @@ class MultiAccountSecrets(SingleAccountSecrets):
         sender = sender_address(data.get('sender_email')) if protocol == 'mail' else None
         if protocol != 'mail' and data.get('sender_email') is not None:
             raise ApiError(400, 'invalid_account_input')
-        return {'id': old['id'] if old else None, 'protocol': protocol, 'profile_id': data['profile_id'],
+        result = {'id': old['id'] if old else None, 'protocol': protocol, 'profile_id': data['profile_id'],
                 'profile_fingerprint': profile.fingerprint, 'revision': old['revision'] if old else None,
                 'username': username, 'app_password': password, 'sender_email': sender,
                 'label': label(data.get('label')), 'capabilities': capabilities(protocol, data.get('capabilities'))}
+        if server_config is not None:
+            result['server_config'] = server_config
+        return result
 
     def save_candidate(self, candidate, new_id, expected_revision, checked_at):
         with self.catalog_lock:

@@ -306,7 +306,7 @@ def create_app(store, cimd=None, backend=None, accounts=None, checks=None):
 
     async def asset(request):
         name = request.url.path.rsplit('/', 1)[-1]
-        if name not in {'login.js', 'login.css', 'accounts.js', 'accounts.css'}:
+        if name not in {'login.js', 'login.css', 'accounts.js', 'accounts.css', 'i18n.js'}:
             return reply({'error':'not_found'}, 404)
         return FileResponse(STATIC / name)
 
@@ -373,7 +373,7 @@ def create_app(store, cimd=None, backend=None, accounts=None, checks=None):
             item = accounts_owner(request)
             if request.headers.get('origin') != ORIGIN or request.headers.get('content-type', '').split(';')[0] != 'application/json':
                 return reply({'error':'same_origin_json_required'}, 403)
-            if len(await request.body()) > 2048:
+            if len(await request.body()) > 8192:
                 return reply({'error':'request_too_large'}, 413)
             data = await request.json()
             if not isinstance(data, dict) or not isinstance(data.get('csrf'), str) or not hmac.compare_digest(data['csrf'], item['csrf']):
@@ -629,7 +629,7 @@ def create_app(store, cimd=None, backend=None, accounts=None, checks=None):
               Route('/accounts/contacts/list', collection_accounts, methods=['POST']),
               Route('/accounts/contacts/save', collection_accounts, methods=['POST']),
               Route('/accounts/contacts/revoke', collection_accounts, methods=['POST']),
-              Route('/static/accounts.js', asset), Route('/static/accounts.css', asset),
+              Route('/static/accounts.js', asset), Route('/static/accounts.css', asset), Route('/static/i18n.js', asset),
               Route("/auth/status", status), Route("/.well-known/oauth-authorization-server", discovery),
               Route('/auth/grants',grants_status),
               Route("/.well-known/oauth-protected-resource/mcp", resource_metadata),

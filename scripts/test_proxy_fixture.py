@@ -70,7 +70,7 @@ def probe(host):
         ('GET', '/accounts/status'), ('POST', '/accounts/check'), ('POST', '/accounts/save'),
         ('POST', '/accounts/calendars/inspect'), ('POST', '/accounts/contacts/save'),
         ('GET', '/auth/status'), ('POST', '/mcp'), ('GET', '/login'),
-        ('GET', '/static/accounts.js'), ('POST', '/oauth/token'),
+        ('GET', '/static/accounts.js'), ('GET', '/static/i18n.js'), ('POST', '/oauth/token'),
         ('GET', '/.well-known/oauth-authorization-server'),
         ('GET', '/.well-known/oauth-protected-resource/mcp'),
     ]
@@ -93,7 +93,7 @@ def probe(host):
     negative = [
         ('GET', '/accounts/manage/unknown', 404), ('POST', '/accounts/manage/save/extra', 404),
         ('GET', '/accounts/calendars/list/', 404), ('GET', '/accounts/contacts/list/extra', 404),
-        ('GET', '/Accounts/status', 404), ('GET', '/admin', 404),
+        ('GET', '/Accounts/status', 404), ('GET', '/admin', 404), ('GET', '/static/i18n.css', 404),
         ('DELETE', '/accounts/manage/remove', 405),
     ]
     for method, path, expected in negative:

@@ -8,8 +8,9 @@ from unittest.mock import patch
 from bridge.app import ApiError, calendar_id
 from bridge.providers import parse_profiles
 from mcp_bridge.accounts import ConnectionChecks
+from mcp_bridge.account_management import AccountManagement
 from mcp_bridge.operations import Operations
-from mcp_bridge.tests.multi_fixtures import MemoryAccounts, synthetic_store
+from mcp_bridge.tests.multi_fixtures import MemoryAccounts, SyntheticChecks, synthetic_store
 from mcp_bridge.tests.protocol_fixtures import certificate, running, fixture_dial, IMAPHandler, SMTPHandler, DAVHandler
 
 
@@ -65,6 +66,47 @@ class MultiProtocolTests(unittest.TestCase):
         events=[item for item in server.events if 'authentication_matches' in item]
         self.assertTrue(events);self.assertTrue(all(item['authentication_matches'] for item in events))
         self.assertFalse(any(item.get('tls') is False and item.get('command')=='AUTH' for item in server.events))
+
+    def enable_fixture_mail_write(self):
+        row=self.rows['mail']
+        data={'provider':'mail','account_id':row['id'],'expected_revision':row['revision'],'profile_id':row['profile_id'],
+              'label':row['label'],'username':row['username'],'app_password':None,'sender_email':row['sender_email'],
+              'capabilities':['mail:read','mail:write']}
+        if 'server_config' in row:data['server_config']=row['server_config']
+        manager=AccountManagement(self.accounts,self.store,SyntheticChecks())
+        proof=manager.action('check',data,lambda:None,'synthetic-csrf')
+        manager.action('save',{**data,'check_id':proof['check_id'],'persistent_storage_confirmed':True},lambda:None,'synthetic-csrf')
+        self.rows['mail']=next(item for item in self.accounts.inventory(owner=True) if item['id']==row['id'])
+
+    def test_uid_move_uses_real_imaplib_string_capability_and_preserves_single_action_replay(self):
+        self.enable_fixture_mail_write()
+        server=self.server('imap.example.test',IMAPHandler,self.rows['mail'],993)
+        with patch('bridge.network.public_socket',side_effect=self.dial) as dial:
+            folders=self.call('/mcp/mail/folders','mail')['items']
+            request={'mailbox_id':next(row['id'] for row in folders if row['name']=='INBOX'),'uid':7,'uidvalidity':111,
+                     'idempotency_key':'synthetic-tls-trash-0001','confirmed':True}
+            result=self.call('/mcp/mail/trash','mail',**request)
+            self.assertTrue(result['recoverable_trash']);self.assertFalse(result['permanent_purge'])
+            self.assertEqual(result['target_uid'],77);self.assertEqual(result['target_uidvalidity'],333)
+            before=dial.call_count
+            self.assertTrue(self.call('/mcp/mail/trash','mail',**request)['replayed_receipt'])
+            self.assertEqual(dial.call_count,before)
+        self.assert_auth(server);self.assertEqual(len(server.moves),1)
+        self.assertEqual(sum(row.get('command')=='UID_MOVE' for row in server.events),1)
+        self.assertFalse(any(row.get('command') in ('COPY','UID_COPY','STORE','UID_STORE','EXPUNGE','UID_EXPUNGE','CLOSE') for row in server.events))
+
+    def test_missing_or_lookalike_move_capability_over_real_tls_never_uses_fallback(self):
+        self.enable_fixture_mail_write()
+        for index,capability in enumerate((b'',b'NOTMOVE')):
+            server=self.server('imap.example.test',IMAPHandler,self.rows['mail'],993);server.move_capability=capability
+            with patch('bridge.network.public_socket',side_effect=self.dial):
+                folders=self.call('/mcp/mail/folders','mail')['items']
+                with self.assertRaises(ApiError) as error:
+                    self.call('/mcp/mail/trash','mail',mailbox_id=next(row['id'] for row in folders if row['name']=='INBOX'),uid=7,uidvalidity=111,
+                              idempotency_key='synthetic-tls-denied-000'+str(index),confirmed=True)
+                self.assertEqual(error.exception.code,'server_uid_move_required')
+            self.assert_auth(server);self.assertEqual(server.moves,[])
+            self.assertFalse(any(row.get('command') in ('UID_MOVE','COPY','UID_COPY','STORE','UID_STORE','EXPUNGE','UID_EXPUNGE','CLOSE') for row in server.events))
 
     def test_two_mail_accounts_isolate_equal_folder_ids_and_read_over_verified_tls(self):
         servers=[self.server('imap'+suffix+'.example.test',IMAPHandler,self.rows['mail'+suffix],993) for suffix in ('','2')]

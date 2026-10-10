@@ -1,8 +1,10 @@
-# Operator-controlled protocol profiles
+# Protocol profiles and manual accounts
 
 Copy providers.example.json to ignored runtime/providers.json. Compose mounts it read-only at fixed /run/config/providers.json and refuses missing paths. Direct application execution without this file uses presets; a present invalid file stops startup. Use a regular single-link file owned by root or UID 1000, readable by UID 1000 and not group/world-writable. Credentials, unknown fields, duplicate JSON keys, wildcards, IP literals and unsupported ports/TLS modes are rejected.
 
-The sample selects GMX mail and independent iCloud calendar/contact profiles. Both iCloud accounts need their own owner-entered credentials and permissions. Preset shard policies are deliberately encoded in trusted code; custom profiles have exact DNS allowlists.
+The sample selects GMX mail and independent iCloud calendar/contact profiles. Both iCloud accounts need their own owner-entered credentials and permissions. Preset shard policies are deliberately encoded in trusted code; custom profiles have exact DNS allowlists. [Documented provider templates](provider-templates.md) appear alongside the operator profiles in the owner wizard.
+
+After a recent passkey login, the owner can also choose **Other provider / Manual**. The form accepts the same mail schema below or one DAV URL whose host becomes the sole allowed host. A successful connection proof must match the credentials and complete canonical server configuration before saving. Manual settings are stored privately per account, without altering operator profiles. Endpoint edits require credential reentry and rotate the revision after storage. MCP requests cannot supply endpoints. See [the owner workflow](accounts.md).
 
 Example custom config (replace fixture DNS names with your provider's documented public endpoints):
 
@@ -29,13 +31,13 @@ Example custom config (replace fixture DNS names with your provider's documented
 
 SMTP 465 uses implicit TLS; 587 requires starttls_required, with no plaintext AUTH fallback. IMAP supports implicit TLS 993 only. DAV needs HTTPS, an absolute path, no URL credentials/query/fragment and port 443 or 8443. All hosts in a profile share its one port. Discovery, principals, homes, resources and read redirects use the same allowlist. Calendar mutations never follow redirects. Every allowed host can receive credentials: add only documented discovery shards. Calendar/contact lists remain independent.
 
-Every connection resolves once, rejects mixed/private/special IP answers, connects numerically to a checked public IP, checks its peer and verifies the original TLS hostname. New connections revalidate DNS. There is no runtime bypass or arbitrary endpoint field in browser/MCP requests.
+Every connection resolves once, rejects mixed/private/special IP answers, connects numerically to a checked public IP, checks its peer and verifies the original TLS hostname. New connections revalidate DNS. Neither operator profiles nor the owner form can bypass this policy. General browser/MCP operations cannot supply arbitrary request URLs.
 
 Profiles load at startup. After editing this file, recreate only this project's mcp service, review displayed hosts and personally reenter each changed account's credentials. Old profile credentials cannot be forwarded to new hosts; effective revisions change and old IDs/previews/references become invalid. Reselect affected calendar/contact capabilities; reconnect MCP for new scopes. No other services/passwords/grants are changed automatically.
 
 ## Multiple selectable profiles
 
-The version-1 schema remains supported and supplies one operator profile per protocol. Version 2 adds up to 16 named choices alongside the built-in `gmx-mail`, `icloud-caldav` and `icloud-carddav` choices. Each entry has exactly `protocol`, `name` and `config`; `config` uses the same strict protocol schema above. IDs must match `[a-z][a-z0-9_-]{0,47}`, and cannot replace built-in IDs. The defaults must name one valid profile of each protocol. All entries are operator-controlled and are loaded once at startup.
+The version-1 schema remains supported and supplies one operator profile per protocol. Version 2 adds up to 16 named operator choices alongside the built-in templates. Each entry has exactly `protocol`, `name` and `config`; `config` uses the same strict protocol schema above. IDs must match `[a-z][a-z0-9_-]{0,47}`. The three original reserved IDs (`gmx-mail`, `icloud-caldav`, `icloud-carddav`) remain reserved. Previously valid operator IDs that match a new template take precedence and keep their endpoints, fingerprints and generic operator guidance; they are never silently reinterpreted. New manual IDs use a colon (`manual:mail`, `manual:caldav`, `manual:carddav`), which was never legal in operator IDs. The defaults must name one valid profile of each protocol. Operator entries are loaded once at startup; manual configurations are validated on account reads and do not become catalog entries.
 
 ```json
 {
@@ -57,4 +59,4 @@ The version-1 schema remains supported and supplies one operator profile per pro
 
 Accounts choose a profile ID through the owner wizard. A stored profile fingerprint prevents an operator's changed endpoint from receiving old credentials. Removing a profile marks affected accounts unavailable until owner reentry with a valid profile. Stable account IDs survive edits; revisions and bound resource IDs change. New accounts receive no MCP capabilities automatically. See [management and migration](accounts.md).
 
-Custom providers remain experimental and unverified live. Use app passwords or provider-approved basic credentials. Account checks authenticate mail protocols or read DAV discovery metadata without sending mail, reading contact bodies or writing events. They do not prove every folder, event, sharing property or vCard behavior. OAuth-only providers need a future explicit integration. Live tests remain separate owner actions.
+Custom providers and the new templates remain experimental and unverified live. Keep provider 2FA enabled and use app passwords where required or recommended; an interactive second-factor challenge is not supported by these protocol transports. Account checks authenticate mail protocols or read DAV discovery metadata without sending mail, reading contact bodies or writing events. They do not prove every folder, event, sharing property or vCard behavior. OAuth-only providers need a separate explicit integration. Live tests remain separate owner actions.
