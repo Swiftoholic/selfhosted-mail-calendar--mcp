@@ -3,14 +3,19 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(args, stage):
-    result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+    # These commands see only the public template and freshly generated fixtures.
+    result = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=120)
     if result.returncode:
+        diagnostic = result.stderr[-4096:].decode('utf-8', errors='replace').strip()
+        if diagnostic:
+            print(diagnostic, file=sys.stderr)
         raise SystemExit('Synthetic deployment check failed: ' + stage)
 
 
