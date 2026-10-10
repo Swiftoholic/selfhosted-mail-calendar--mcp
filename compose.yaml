@@ -44,7 +44,7 @@ services:
           create_host_path: false
     # No published backend port: only the trusted proxy can supply HTTPS headers.
   proxy:
-    image: docker.io/library/nginx:1.30.5-alpine@sha256:3abad30db61dfb2a339ea21acc9f3e6bbe78e291fcff2f835f4510c8fdfcbd83
+    image: docker.io/library/nginx:1.30.5-alpine@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
     user: "1000:1000"
     entrypoint: [nginx, -c, /etc/nginx/nginx.conf, -g, "daemon off;"]
     depends_on: [mcp]
