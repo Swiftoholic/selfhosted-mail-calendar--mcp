@@ -125,7 +125,11 @@ async function run(){
   await nodes.get('calendar-list').children[0].children[1].children[0].listeners.click();equal(nodes.get('calendar-audience-label').hidden,false);equal(nodes.get('calendar-capability-ack').checked,false);equal(nodes.get('calendar-audience-ack').checked,false);
   await click('calendar-save');ok(!calendarEnabled);nodes.get('calendar-capability-ack').checked=true;await click('calendar-save');ok(!calendarEnabled);nodes.get('calendar-audience-ack').checked=true;await click('calendar-save');ok(calendarEnabled);
   const calendarSave=calls.find(x=>x.path==='/accounts/calendars/save').body;equal(calendarSave.account_id,'c'.repeat(24));equal(calendarSave.expected_revision,'3'.repeat(24));equal(calendarSave.audience_acknowledged,true);
-  await accountAction('d',2);await click('contacts-load');equal(calls.at(-1).body.account_id,'d'.repeat(24));await nodes.get('contacts-list').children[0].children[1].children[0].listeners.click();await click('contacts-save');ok(!contactEnabled);nodes.get('contacts-read-ack').checked=true;await click('contacts-save');ok(contactEnabled);
+  await accountAction('d',2);await click('contacts-load');equal(calls.at(-1).body.account_id,'d'.repeat(24));await nodes.get('contacts-list').children[0].children[1].children[0].listeners.click();
+  ok(nodes.get('contacts-save').disabled,'book access needs its unchecked explicit confirmation');await click('contacts-save');ok(!contactEnabled);
+  nodes.get('contacts-read-ack').checked=true;nodes.get('contacts-read-ack').listeners.change();ok(!nodes.get('contacts-save').disabled);
+  nodes.get('contacts-read-ack').checked=false;nodes.get('contacts-read-ack').listeners.change();ok(nodes.get('contacts-save').disabled);
+  nodes.get('contacts-read-ack').checked=true;nodes.get('contacts-read-ack').listeners.change();await click('contacts-save');ok(contactEnabled);
   equal(calls.find(x=>x.path==='/accounts/contacts/save').body.account_id,'d'.repeat(24));
   await accountAction('b',2);await click('remove-save');equal(items.length,5);nodes.get('remove-confirm').checked=true;await click('remove-save');equal(items.length,4);ok(items.some(x=>x.id==='a'.repeat(24)));equal(calls.find(x=>x.path==='/accounts/manage/remove').body.account_id,'b'.repeat(24));
   await newWizard();fill();await events.keydown({key:'Escape'});equal(nodes.get('wizard-panel').hidden,true);equal(nodes.get('account-password').value,'');
