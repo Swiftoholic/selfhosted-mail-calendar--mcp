@@ -52,7 +52,7 @@ function buttons() {
   el("wizard-save").disabled=!ready || busy || !supportedProfile() || !draft?.check || !el("account-persist").checked;
   el("remove-save").disabled=!ready || busy || !removal || !el("remove-confirm").checked;
   el("calendar-save").disabled=!ready || busy || !calendarReview || calendarReview.write_permission==="denied";
-  el("contacts-save").disabled=!ready || busy || !contactsReview;
+  el("contacts-save").disabled=!ready || busy || !contactsReview || !el("contacts-read-ack").checked;
   ["calendar-list","contacts-list"].forEach(id=>el(id).querySelectorAll("button").forEach(button=>{button.disabled=!ready || busy;}));
 }
 function badge(row) {
@@ -351,6 +351,7 @@ el("contacts-save").addEventListener("click",()=>{
   const context=collectionContext("contacts"),payload={...contactsReview.payload,read_access_acknowledged:true};
   return run(async()=>{await collectionRequest("contacts","save",payload);if(collectionCurrent("contacts",context))await loadCollection("contacts");},"contacts-result");
 });
+el("contacts-read-ack").addEventListener("change",buttons);
 i18n.onChange(()=>{
   for(const [id,value] of messages)el(id).textContent=t(value.key,value.params);
   if(state)renderAccounts();

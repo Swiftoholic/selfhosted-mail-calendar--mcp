@@ -18,6 +18,7 @@ from starlette.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 
 from bridge.app import ApiError, App
+from bridge.network import NetworkError
 from .cimd import CIMD, expected_redirect
 from .config import COOKIE, DEFAULT_SCOPE, DOMAIN, HOST, MAX_BODY, ORIGIN, RESOURCE, SCOPES, SESSION_TTL
 from .oauth import LibraryRequest, OAuth, metadata
@@ -489,6 +490,8 @@ def create_app(store, cimd=None, backend=None, accounts=None, checks=None):
             return reply({'error':'recent_owner_session_required'}, 401)
         except ApiError as error:
             return reply({'error':error.code}, error.status)
+        except (NetworkError, TimeoutError):
+            return reply({'error':'provider_network_unavailable'}, 502)
         except Exception:
             return reply({'error':'calendar_request_rejected'}, 400)
         finally:
